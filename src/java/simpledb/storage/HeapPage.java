@@ -7,6 +7,7 @@ import simpledb.common.Debug;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
@@ -76,7 +77,7 @@ public class HeapPage implements Page {
      */
     private int getNumTuples() {
         // TODO: some code goes here
-        return 0;
+        return (int) Math.floor( (BufferPool.getPageSize()*8*1.0) / (td.getSize()*8*1.0+1.0) );
 
     }
 
@@ -88,8 +89,7 @@ public class HeapPage implements Page {
     private int getHeaderSize() {
 
         // TODO: some code goes here
-        return 0;
-
+        return (int) Math.ceil(this.getNumTuples()/8.0);
     }
 
     /**
@@ -122,7 +122,7 @@ public class HeapPage implements Page {
      */
     public HeapPageId getId() {
         // TODO: some code goes here
-        throw new UnsupportedOperationException("implement this");
+        return this.pid;
     }
 
     /**
@@ -294,15 +294,26 @@ public class HeapPage implements Page {
      */
     public int getNumUnusedSlots() {
         // TODO: some code goes here
-        return 0;
+        int num = 0;
+        for(int i=0;i<this.numSlots;i++){
+            if(!isSlotUsed(i)){
+                ++num;
+            }
+        }
+
+        return num;
     }
 
     /**
      * Returns true if associated slot on this page is filled.
      */
     public boolean isSlotUsed(int i) {
-        // TODO: some code goes here
-        return false;
+        int cnt = i / 8;
+        int more = i % 8;
+
+        int bitIdx = header[cnt];
+        int nowBit = (bitIdx>>more)&1;
+        return nowBit == 1;
     }
 
     /**
@@ -319,7 +330,14 @@ public class HeapPage implements Page {
      */
     public Iterator<Tuple> iterator() {
         // TODO: some code goes here
-        return null;
+        ArrayList<Tuple> filledTuples = new ArrayList<Tuple>();
+        for(int i=0;i<numSlots;i++){
+            if(isSlotUsed(i)){
+                filledTuples.add(tuples[i]);
+            }
+        }
+
+        return filledTuples.iterator();
     }
 
 }
