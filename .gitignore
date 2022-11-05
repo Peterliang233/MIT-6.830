@@ -1,0 +1,7 @@
+.vscode
+.idea
+*.txt
+*.dat
+/dist
+/META-INF
+/out
