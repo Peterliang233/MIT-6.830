@@ -7,6 +7,7 @@ import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
+import javax.xml.crypto.Data;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -135,16 +136,52 @@ public class HeapFile implements DbFile {
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // TODO: some code goes here
-        return null;
         // not necessary for lab1
+        List<Page> pages = new ArrayList<>();
+        for(int i=0;i<numPages();i++){
+            HeapPageId heapPageId = new HeapPageId(getId(), i);
+
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, heapPageId, Permissions.READ_WRITE);
+
+            if(page.getNumEmptySlots()!=0){
+                page.insertTuple(t);
+                pages.add(page);
+                return pages;
+            }
+        }
+
+        // not have more pages,create a new page for this operation.
+        BufferedOutputStream output = new BufferedOutputStream(new FileOutputStream(file, true));
+        byte[] newPage = HeapPage.createEmptyPageData();
+        output.write(newPage);
+        output.flush();
+
+
+        HeapPageId pageId = new HeapPageId(getId(), numPages()-1);
+
+
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+
+        page.insertTuple(t);
+        pages.add(page);
+        return pages;
     }
 
     // see DbFile.java for javadocs
     public List<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // TODO: some code goes here
-        return null;
         // not necessary for lab1
+        List<Page> pages = new ArrayList<>();
+
+        PageId pageId = t.getRecordId().getPageId();
+
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+
+        page.deleteTuple(t);
+
+        pages.add(page);
+        return pages;
     }
 
     // see DbFile.java for javadocs
