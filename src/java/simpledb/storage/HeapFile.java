@@ -80,6 +80,7 @@ public class HeapFile implements DbFile {
     public Page readPage(PageId pid) {
         // TODO: some code goes here
         int tableId = pid.getTableId();
+        // note: the pageNo in range with[0,1,2...numPage-1]
         int pageNo = pid.getPageNumber();
 
         RandomAccessFile f = null;
@@ -122,6 +123,19 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // TODO: some code goes here
         // not necessary for lab1
+        // replace origin page with the page
+        int pageNo = page.getId().getPageNumber();
+        if(pageNo > numPages()) {
+            throw new IllegalArgumentException();
+        }
+
+        RandomAccessFile f = new RandomAccessFile(file, "rw");
+
+        f.seek((long) pageNo * BufferPool.getPageSize());
+
+        f.write(page.getPageData());
+
+        f.close();
     }
 
     /**
@@ -228,25 +242,27 @@ public class HeapFile implements DbFile {
 
             // maybe have more than one page in the DbFile.
             if(!it.hasNext()) {
-                if(whichPage < (heapFile.numPages() - 1)) {
+                while(whichPage < (heapFile.numPages() - 1)) {
                     whichPage ++;
                     it = getPageTuples(whichPage);
-                    return it.hasNext();
-                }else{
-                    return false;
+                    if(it.hasNext()) {
+                        return true;
+                    }
                 }
-            }else{
-                return true;
+
+                return false;
             }
+
+            return true;
         }
 
         @Override
         public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
             if(it == null || !it.hasNext()) {
                 throw new NoSuchElementException();
-            }else{
-                return it.next();
             }
+
+            return it.next();
         }
 
         @Override
