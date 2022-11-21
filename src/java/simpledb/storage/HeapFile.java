@@ -242,6 +242,7 @@ public class HeapFile implements DbFile {
 
             // maybe have more than one page in the DbFile.
             if(!it.hasNext()) {
+                // if whichPage => maxPage, do not need decrement.
                 while(whichPage < (heapFile.numPages() - 1)) {
                     whichPage ++;
                     it = getPageTuples(whichPage);
