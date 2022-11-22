@@ -5,3 +5,6 @@
 /dist
 /META-INF
 /out
+log
+*.log
+/log
