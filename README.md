@@ -2,4 +2,4 @@
 ==================
 A expirment about how to design a simple relation database system.
 
-<a href="https://mrb4efdepj.feishu.cn/docx/UIrHd1gouov9T4xGdwac9MU4nnh">My Note(click me!)</a>
+<a href="https://mrb4efdepj.feishu.cn/docx/BL69d2N1hoHGNwxzVIIcoiVlnMh">Lab2's note</a>
