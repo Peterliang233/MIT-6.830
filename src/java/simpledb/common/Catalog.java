@@ -23,7 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Catalog {
 
-    private final ConcurrentHashMap<Integer, Table> hashMap;
+    private ConcurrentHashMap<Integer, Table> integerTableMap;
+
+    private ConcurrentHashMap<String, Table> stringTableMap;
 
     private static class Table {
         private static final long serialVersionUID = 1L;
@@ -51,7 +53,8 @@ public class Catalog {
      */
     public Catalog() {
         // TODO: some code goes here
-        hashMap = new ConcurrentHashMap<Integer, Table>();
+        integerTableMap = new ConcurrentHashMap<>();
+        stringTableMap = new ConcurrentHashMap<>();
     }
 
     /**
@@ -67,7 +70,8 @@ public class Catalog {
     public void addTable(DbFile file, String name, String pkeyField) {
         // TODO: some code goes here
         Table table = new Table(file, name, pkeyField);
-        hashMap.put(file.getId(), table);
+        integerTableMap.put(file.getId(), table);
+        stringTableMap.put(name, table);
     }
 
     public void addTable(DbFile file, String name) {
@@ -93,10 +97,9 @@ public class Catalog {
      */
     public int getTableId(String name) throws NoSuchElementException {
         // TODO: some code goes here
-        for (Map.Entry<Integer,Table> entry: hashMap.entrySet()) {
-            if (entry.getValue().tableName.equals(name)) {
-                return entry.getKey();
-            }
+        if(name != null && stringTableMap.containsKey(name)) {
+            Table table = stringTableMap.get(name);
+            return table.dbFile.getId();
         }
         throw new NoSuchElementException("Not found the name in the tableName.");
     }
@@ -110,7 +113,7 @@ public class Catalog {
      */
     public TupleDesc getTupleDesc(int tableid) throws NoSuchElementException {
         // TODO: some code goes here
-        Table table = hashMap.getOrDefault(tableid, null);
+        Table table = integerTableMap.getOrDefault(tableid, null);
         if (table != null) {
             return table.dbFile.getTupleDesc();
         }else{
@@ -127,7 +130,7 @@ public class Catalog {
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
         // TODO: some code goes here
-        Table table = hashMap.getOrDefault(tableid, null);
+        Table table = integerTableMap.getOrDefault(tableid, null);
         if (table != null) {
             return table.dbFile;
         }
@@ -136,7 +139,7 @@ public class Catalog {
 
     public String getPrimaryKey(int tableid) {
         // TODO: some code goes here
-        Table table = hashMap.getOrDefault(tableid,null);
+        Table table = integerTableMap.getOrDefault(tableid,null);
         if (table != null) {
             return table.pk;
         }
@@ -145,12 +148,12 @@ public class Catalog {
 
     public Iterator<Integer> tableIdIterator() {
         // TODO: some code goes here
-        return hashMap.keySet().iterator();
+        return integerTableMap.keySet().iterator();
     }
 
     public String getTableName(int id) {
         // TODO: some code goes here
-        Table table = hashMap.getOrDefault(id, null);
+        Table table = integerTableMap.getOrDefault(id, null);
 
         if (table != null) {
             return table.tableName;
@@ -164,7 +167,7 @@ public class Catalog {
      */
     public void clear() {
         // TODO: some code goes here
-        hashMap.clear();
+        integerTableMap.clear();
     }
 
     /**

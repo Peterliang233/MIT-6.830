@@ -7,6 +7,7 @@ import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
+import javax.xml.crypto.Data;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,7 +34,8 @@ public class BufferPool {
 
     private final int numPages;
 
-    private final ConcurrentHashMap<Integer, Page> pageStore;
+    private final ConcurrentHashMap<PageId, LinkNode> pageStore;
+
 
     /**
      * Default number of pages passed to the constructor. This is used by
@@ -41,6 +43,50 @@ public class BufferPool {
      * constructor instead.
      */
     public static final int DEFAULT_PAGES = 50;
+
+    public static  class LinkNode {
+        PageId pageId;
+        Page page;
+        LinkNode prev;
+        LinkNode next;
+        public LinkNode(PageId pageId, Page page) {
+            this.page = page;
+            this.pageId = pageId;
+        }
+    }
+
+    // define head and tail as two head,but they are not store data.
+    LinkNode head;
+    LinkNode tail;
+
+
+    public void addToHead(LinkNode node) {
+        node.prev = head;
+        node.next = head.next;
+        node.next.prev = node;
+        head.next = node;
+    }
+
+    public void remove(LinkNode node) {
+        node.prev.next = node.next;
+        node.next.prev = node.prev;
+    }
+
+    public void moveToHead(LinkNode node) {
+        remove(node);
+        addToHead(node);
+    }
+
+
+    // evict one page from bufferPool
+    public LinkNode removeTail() {
+        LinkNode node = tail.prev;
+        remove(node);
+        return node;
+    }
+
+
+
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -50,7 +96,12 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // TODO: some code goes here
         this.numPages = numPages;
-        pageStore = new ConcurrentHashMap<Integer, Page>();
+        pageStore = new ConcurrentHashMap<PageId, LinkNode>();
+        head = new LinkNode(new HeapPageId(-1,-1), null);
+        tail = new LinkNode(new HeapPageId(-1,-1), null);
+
+        head.next = tail;
+        tail.prev = head;
     }
 
     public static int getPageSize() {
@@ -85,12 +136,18 @@ public class BufferPool {
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
             throws TransactionAbortedException, DbException {
         // TODO: some code goes here
-        if(!pageStore.containsKey(pid.hashCode())) {
+        if(!pageStore.containsKey(pid)) {
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             Page page = dbFile.readPage(pid);
-            pageStore.put(pid.hashCode(), page);
+            if(pageStore.size() >= numPages) {
+                evictPage();
+            }
+            LinkNode node = new LinkNode(pid, page);
+            pageStore.put(pid, node);
+            addToHead(node);
         }
-        return pageStore.get(pid.hashCode());
+        moveToHead(pageStore.get(pid));
+        return pageStore.get(pid).page;
     }
 
     /**
@@ -157,6 +214,9 @@ public class BufferPool {
             throws DbException, IOException, TransactionAbortedException {
         // TODO: some code goes here
         // not necessary for lab1
+        DbFile file = Database.getCatalog().getDatabaseFile(tableId);
+        List<Page> pages = file.insertTuple(tid, t);
+        updateBufferPool(pages, tid);
     }
 
     /**
@@ -176,6 +236,22 @@ public class BufferPool {
             throws DbException, IOException, TransactionAbortedException {
         // TODO: some code goes here
         // not necessary for lab1
+        DbFile file = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
+        List<Page> pages = file.deleteTuple(tid, t);
+        updateBufferPool(pages, tid);
+    }
+
+
+    public void updateBufferPool(List<Page> pages, TransactionId tid) throws DbException {
+        for(Page page: pages) {
+            page.markDirty(true,tid);
+            if(pageStore.size() > numPages){
+                evictPage();
+            }
+            LinkNode node = pageStore.get(page.getId());
+            node.page = page;
+            pageStore.put(page.getId(), node);
+        }
     }
 
     /**
@@ -186,7 +262,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // TODO: some code goes here
         // not necessary for lab1
-
+        for(PageId pageId : pageStore.keySet()) {
+            flushPage(pageId);
+        }
     }
 
     /**
@@ -201,6 +279,7 @@ public class BufferPool {
     public synchronized void removePage(PageId pid) {
         // TODO: some code goes here
         // not necessary for lab1
+        pageStore.remove(pid);
     }
 
     /**
@@ -211,6 +290,11 @@ public class BufferPool {
     private synchronized void flushPage(PageId pid) throws IOException {
         // TODO: some code goes here
         // not necessary for lab1
+        Page page = pageStore.get(pid).page;
+        if(page.isDirty()!=null) {
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
+            page.markDirty(false, null);
+        }
     }
 
     /**
@@ -228,6 +312,14 @@ public class BufferPool {
     private synchronized void evictPage() throws DbException {
         // TODO: some code goes here
         // not necessary for lab1
-    }
+        LinkNode node = removeTail();
+        try {
+            // evict this page need to write the page into the disk.
+            flushPage(node.pageId);
+        }catch (IOException e) {
+            e.printStackTrace();
+        }
 
+        pageStore.remove(node.pageId);
+    }
 }
