@@ -2,10 +2,24 @@ package simpledb.optimizer;
 
 import simpledb.execution.Predicate;
 
+import java.util.NoSuchElementException;
+
 /**
  * A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
+
+    private final int min;
+
+    private final int max;
+
+    private final int bucketNum;
+
+    private final int[] buckets;
+
+    private final double width;
+
+    private int ntups;  // the number of tuples in the table.
 
     /**
      * Create a new IntHistogram.
@@ -25,6 +39,21 @@ public class IntHistogram {
      */
     public IntHistogram(int buckets, int min, int max) {
         // TODO: some code goes here
+        this.bucketNum = buckets;
+        this.max = max;
+        this.min = min;
+        this.buckets = new int[buckets];
+        this.width = (max - min + 1.0) / buckets;
+        this.ntups = 0;
+    }
+
+
+    public int getIdx(int v){
+        if(v < min || v > max){
+            throw new IllegalArgumentException("v is out of bounds range.");
+        }
+
+        return (int) ((v - min) / width);
     }
 
     /**
@@ -34,6 +63,12 @@ public class IntHistogram {
      */
     public void addValue(int v) {
         // TODO: some code goes here
+        if(v < min || v > max){
+            throw new IllegalArgumentException("v is out of bounds range.");
+        }
+
+        this.buckets[getIdx(v)] ++;
+        this.ntups ++;
     }
 
     /**
@@ -47,8 +82,43 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
         // TODO: some code goes here
+        if (op.equals(Predicate.Op.LESS_THAN)) {
+            if(v <= min) return 0.0;
+            if(v >= max) return 1.0;
+
+            double sum = 0.0;
+            int idx = getIdx(v);
+            for(int i=0;i<idx;i++){
+                sum += this.buckets[i];
+            }
+
+            sum += ((v - min - idx * width)/width) * this.buckets[idx];
+
+            return sum / ntups;
+        }
+        if (op.equals(Predicate.Op.GREATER_THAN)) {
+            return 1.0 - estimateSelectivity(Predicate.Op.LESS_THAN, v);
+        }
+
+        if(op.equals(Predicate.Op.LESS_THAN_OR_EQ)) {
+            return estimateSelectivity(Predicate.Op.EQUALS, v) + estimateSelectivity(Predicate.Op.LESS_THAN, v);
+        }
+
+        if (op.equals(Predicate.Op.GREATER_THAN_OR_EQ)) {
+            return estimateSelectivity(Predicate.Op.GREATER_THAN, v) + estimateSelectivity(Predicate.Op.EQUALS, v);
+        }
+
+        if (op.equals(Predicate.Op.NOT_EQUALS)) {
+            return 1.0 - estimateSelectivity(Predicate.Op.EQUALS, v);
+        }
+
+        if(op.equals(Predicate.Op.EQUALS)) {
+            if(v < min || v > max) return 0.0;
+            int idx = getIdx(v);
+            return (this.buckets[idx] / width ) / ntups;
+        }
+
         return -1.0;
     }
 
@@ -61,7 +131,12 @@ public class IntHistogram {
      */
     public double avgSelectivity() {
         // TODO: some code goes here
-        return 1.0;
+        int sum = 0;
+        for(int i=0;i<this.bucketNum;i++){
+            sum += this.buckets[i];
+        }
+
+        return (double) sum / this.ntups;
     }
 
     /**
@@ -69,6 +144,6 @@ public class IntHistogram {
      */
     public String toString() {
         // TODO: some code goes here
-        return null;
+        return String.format("IntHistogram min: %d, max: %d\n", min, max);
     }
 }
