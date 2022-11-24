@@ -3,6 +3,7 @@ package simpledb.optimizer;
 import simpledb.execution.Predicate;
 
 import java.util.NoSuchElementException;
+import java.util.logging.Level;
 
 /**
  * A class to represent a fixed-width histogram over a single integer-based field.
@@ -15,7 +16,7 @@ public class IntHistogram {
 
     private final int bucketNum;
 
-    private final int[] buckets;
+    private int[] buckets;
 
     private final double width;
 
@@ -49,9 +50,6 @@ public class IntHistogram {
 
 
     public int getIdx(int v){
-        if(v < min || v > max){
-            throw new IllegalArgumentException("v is out of bounds range.");
-        }
 
         return (int) ((v - min) / width);
     }
@@ -63,12 +61,10 @@ public class IntHistogram {
      */
     public void addValue(int v) {
         // TODO: some code goes here
-        if(v < min || v > max){
-            throw new IllegalArgumentException("v is out of bounds range.");
+        if(v >= min && v <= max){
+            this.buckets[getIdx(v)] ++;
+            this.ntups ++;
         }
-
-        this.buckets[getIdx(v)] ++;
-        this.ntups ++;
     }
 
     /**
@@ -93,20 +89,20 @@ public class IntHistogram {
                 sum += this.buckets[i];
             }
 
-            sum += ((v - min - idx * width)/width) * this.buckets[idx];
+            sum += (v - min - idx * width) * (1.0 * this.buckets[idx]/width);
 
             return sum / ntups;
         }
         if (op.equals(Predicate.Op.GREATER_THAN)) {
-            return 1.0 - estimateSelectivity(Predicate.Op.LESS_THAN, v);
+            return 1.0 - estimateSelectivity(Predicate.Op.LESS_THAN_OR_EQ, v);
         }
 
         if(op.equals(Predicate.Op.LESS_THAN_OR_EQ)) {
-            return estimateSelectivity(Predicate.Op.EQUALS, v) + estimateSelectivity(Predicate.Op.LESS_THAN, v);
+            return estimateSelectivity(Predicate.Op.LESS_THAN, v+1);
         }
 
         if (op.equals(Predicate.Op.GREATER_THAN_OR_EQ)) {
-            return estimateSelectivity(Predicate.Op.GREATER_THAN, v) + estimateSelectivity(Predicate.Op.EQUALS, v);
+            return estimateSelectivity(Predicate.Op.GREATER_THAN, v-1);
         }
 
         if (op.equals(Predicate.Op.NOT_EQUALS)) {
@@ -114,12 +110,11 @@ public class IntHistogram {
         }
 
         if(op.equals(Predicate.Op.EQUALS)) {
-            if(v < min || v > max) return 0.0;
-            int idx = getIdx(v);
-            return (this.buckets[idx] / width ) / ntups;
+            return estimateSelectivity(Predicate.Op.LESS_THAN_OR_EQ, v) -
+                    estimateSelectivity(Predicate.Op.LESS_THAN, v);
         }
 
-        return -1.0;
+        throw new UnsupportedOperationException("Operation is illegal.");
     }
 
     /**
