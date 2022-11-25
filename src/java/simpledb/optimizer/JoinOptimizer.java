@@ -2,6 +2,7 @@ package simpledb.optimizer;
 
 import simpledb.ParsingException;
 import simpledb.common.Database;
+import simpledb.common.DeadlockException;
 import simpledb.execution.*;
 import simpledb.storage.TupleDesc;
 
@@ -166,6 +167,27 @@ public class JoinOptimizer {
         return card;
     }
 
+    private <T> Set<Set<T>> myEnumerateSubsets(List<T> v, int size) {
+        Set<Set<T>> els = new HashSet<>();
+        dfs(v, size, 0, els, new ArrayDeque<T>());
+
+        return els;
+    }
+
+    private <T> void dfs(List<T> list, int size, int begin, Set<Set<T>> els, Deque<T> path) {
+        if(path.size() == size) {
+            els.add(new HashSet<>(path));
+            return;
+        }
+
+        for(int i=begin;i<list.size();i++) {
+            path.add(list.get(i));
+            dfs(list, size, i+1, els, path);
+            path.removeLast();
+        }
+    }
+
+
     /**
      * Helper method to enumerate all of the subsets of a given size of a
      * specified vector.
@@ -223,7 +245,7 @@ public class JoinOptimizer {
         PlanCache planCache = new PlanCache();
         int size = joins.size();
         for(int i=1;i<=size;i++){
-            Set<Set<LogicalJoinNode>> subsets = enumerateSubsets(joins, i);
+            Set<Set<LogicalJoinNode>> subsets = myEnumerateSubsets(joins, i);
             // loop all the subset.
             for(Set<LogicalJoinNode> set: subsets) {
                 double bestCostSoFar = Double.MAX_VALUE;
