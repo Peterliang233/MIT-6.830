@@ -157,8 +157,9 @@ public class BufferPool {
                             pageMap.put(tid, pageLock);
                             locks.put(pid, pageMap);
                             return true;
+                        }else if(pageMap.size() > 1){
+                            return false;
                         }
-                        return false;
                     }
                 }
 
@@ -174,12 +175,12 @@ public class BufferPool {
                         pageMap.put(tid, pageLock);
                         locks.put(pid, pageMap);
                         return true;
-                    }else{
+                    }else if(lockType == PageLock.EXCLUSIVE){
                         return false;
                     }
                 }else if(pageMap.size()==1){
                     // the page's size == 1 confirm the lock is a share lock or exclusive lock.
-                    PageLock pageLock = new PageLock();
+                    PageLock pageLock = null;
                     for(PageLock item : pageMap.values()) {
                         pageLock = item;
                     }
@@ -283,15 +284,14 @@ public class BufferPool {
             throws TransactionAbortedException, DbException {
         int getType = (perm == Permissions.READ_ONLY ? PageLock.SHARE : PageLock.EXCLUSIVE);
         long start = System.currentTimeMillis();
-        while(true) {
-            if(!manager.acquireLock(pid, tid, getType)) {
-                long now = System.currentTimeMillis();
-                if(now - start > 500) {
-                    throw new TransactionAbortedException();
-                }
-            }else{
-                break;
+        boolean isLockAcquired = false;
+        long timeout = new Random().nextInt(2000) + 1000;
+        while(!isLockAcquired) {
+            long now = System.currentTimeMillis();
+            if(now - start > timeout) {
+                throw new TransactionAbortedException();
             }
+            isLockAcquired = manager.acquireLock(pid, tid, getType);
         }
 
         // successful get a lock.
@@ -355,6 +355,35 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // TODO: some code goes here
         // not necessary for lab1|lab2
+        if(commit) {
+            // if successful,we should execute flush pages.
+            try {
+                flushPages(tid);
+            }catch (IOException e) {
+                e.printStackTrace();
+            }
+        }else {
+           // restore all the page before
+            restorePages(tid);
+        }
+        // after that,we should release all the lock in this tid.
+        manager.completeTransaction(tid);
+    }
+
+    public synchronized void restorePages(TransactionId tid) {
+        for(LinkNode node : pageStore.values()) {
+            Page page = node.page;
+            PageId pageId = node.pageId;
+            if(tid.equals(page.isDirty())) {
+                int tableId = pageId.getTableId();
+                DbFile table = Database.getCatalog().getDatabaseFile(tableId);
+
+                // rewrite cache from disk.
+                node.page = table.readPage(pageId);
+                pageStore.put(pageId, node);
+                moveToHead(node);
+            }
+        }
     }
 
     /**
@@ -465,6 +494,13 @@ public class BufferPool {
     public synchronized void flushPages(TransactionId tid) throws IOException {
         // TODO: some code goes here
         // not necessary for lab1|lab2
+        for(LinkNode node: pageStore.values()) {
+            PageId pageId = node.pageId;
+            Page page = node.page;
+            if(tid.equals(page.isDirty())) {
+                flushPage(pageId);
+            }
+        }
     }
 
     /**
@@ -474,14 +510,27 @@ public class BufferPool {
     private synchronized void evictPage() throws DbException {
         // TODO: some code goes here
         // not necessary for lab1
-        LinkNode node = removeTail();
-        try {
-            // evict this page need to write the page into the disk.
-            flushPage(node.pageId);
-        }catch (IOException e) {
-            e.printStackTrace();
+        // we should find a clean page to evict,notice cannot evict a dirty page.
+        // so we should loop all the pages.
+        for(int i=0;i<numPages;i++){
+            LinkNode node = removeTail();
+            Page page = node.page;
+
+            if(page.isDirty() != null){
+                // there is a transaction in this page.
+                addToHead(node);
+            }else{
+                try {
+                    // evict this page need to write the page into the disk.
+                    flushPage(node.pageId);
+                }catch (IOException e) {
+                    e.printStackTrace();
+                }
+                pageStore.remove(node.pageId);
+            }
+            return;
         }
 
-        pageStore.remove(node.pageId);
+        throw new DbException("there are no dirty pages.");
     }
 }
