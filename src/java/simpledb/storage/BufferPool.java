@@ -36,6 +36,8 @@ public class BufferPool {
 
     private final ConcurrentHashMap<PageId, LinkNode> pageStore;
 
+    private final LockManager manager;
+
 
     /**
      * Default number of pages passed to the constructor. This is used by
@@ -44,6 +46,8 @@ public class BufferPool {
      */
     public static final int DEFAULT_PAGES = 50;
 
+
+    // lab3 page evict.
     public static  class LinkNode {
         PageId pageId;
         Page page;
@@ -86,6 +90,146 @@ public class BufferPool {
     }
 
 
+    // lab4 TransactionId
+    public class PageLock {
+        public static final int SHARE = 0;
+        public static final int EXCLUSIVE = 1;
+
+        private int lockType;
+
+        private TransactionId tid;
+
+        public PageLock(int type, TransactionId tid) {
+            this.lockType = type;
+            this.tid = tid;
+        }
+
+        public PageLock() {
+
+        }
+
+        public int getLockType() {
+            return lockType;
+        }
+
+        public TransactionId getTid() {
+            return tid;
+        }
+
+        public void setLockType(int lockType) {
+            this.lockType = lockType;
+        }
+
+        public void setTid(TransactionId tid) {
+            this.tid = tid;
+        }
+    }
+
+
+    public class LockManager {
+        private ConcurrentHashMap<PageId, ConcurrentHashMap<TransactionId, PageLock>> locks;
+
+        public LockManager() {
+            locks = new ConcurrentHashMap<>();
+        }
+
+        public synchronized boolean acquireLock(PageId pid, TransactionId tid, int lockType) {
+            // get the locks on the page.
+            if(!locks.containsKey(pid)){
+                PageLock pageLock = new PageLock(lockType,tid);
+                ConcurrentHashMap<TransactionId, PageLock> map = new ConcurrentHashMap<>();
+                map.put(tid, pageLock);
+                locks.put(pid, map);
+                return true;
+            }
+
+            ConcurrentHashMap<TransactionId, PageLock> pageMap = locks.get(pid);
+            if(pageMap.containsKey(tid)) {
+                PageLock pageLock = pageMap.get(tid);
+                // already have a share lock.
+                if(pageLock.getLockType() == PageLock.SHARE) {
+                    if(lockType == PageLock.SHARE) {
+                        return true;
+                    }else if(lockType == PageLock.EXCLUSIVE){
+                        // if transaction t is the only transaction holding a shared lock on an object o,t may upgrade its lock on o to an exclusive lock.
+                        if(pageMap.size() == 1) {
+                            pageLock.setLockType(PageLock.EXCLUSIVE);
+                            pageMap.put(tid, pageLock);
+                            locks.put(pid, pageMap);
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+
+                return pageLock.getLockType() == PageLock.EXCLUSIVE;
+            }else{
+                // the page have other transaction lock.
+
+
+                // the page's size > 1 confirm there is a shore lock.
+                if(pageMap.size()>1){
+                    if(lockType == PageLock.SHARE) {
+                        PageLock pageLock = new PageLock(lockType, tid);
+                        pageMap.put(tid, pageLock);
+                        locks.put(pid, pageMap);
+                        return true;
+                    }else{
+                        return false;
+                    }
+                }else if(pageMap.size()==1){
+                    // the page's size == 1 confirm the lock is a share lock or exclusive lock.
+                    PageLock pageLock = new PageLock();
+                    for(PageLock item : pageMap.values()) {
+                        pageLock = item;
+                    }
+
+                    // hold a share lock.
+                    if(pageLock.getLockType() == PageLock.SHARE){
+                        if(lockType == PageLock.SHARE){
+                            PageLock newPageLock = new PageLock(PageLock.SHARE, tid);
+                            pageMap.put(tid, newPageLock);
+                            locks.put(pid, pageMap);
+                            return true;
+                        }else if(lockType == PageLock.EXCLUSIVE){
+                            return false;
+                        }
+                    }else if(pageLock.getLockType() == PageLock.EXCLUSIVE){
+                        // hold a exclusive lock.
+                        return false;
+                    }
+                }
+            }
+            return false;
+        }
+
+        public synchronized void releaseLock(TransactionId tid, PageId pid) {
+            if(isHoldLock(tid, pid)){
+                ConcurrentHashMap<TransactionId, PageLock> map = locks.get(pid);
+                map.remove(tid);
+                if(map.size()==0){
+                    locks.remove(pid);
+                }
+            }
+        }
+
+        public synchronized boolean isHoldLock(TransactionId tid, PageId pageId) {
+            if(!locks.containsKey(pageId)) {
+                return false;
+            }else{
+                ConcurrentHashMap<TransactionId, PageLock> map = locks.get(pageId);
+                return map.containsKey(tid);
+            }
+        }
+
+        public synchronized void completeTransaction(TransactionId tid) {
+            for(PageId pid : locks.keySet()) {
+                releaseLock(tid, pid);
+            }
+        }
+    }
+
+
 
 
     /**
@@ -102,6 +246,8 @@ public class BufferPool {
 
         head.next = tail;
         tail.prev = head;
+
+        manager = new LockManager();
     }
 
     public static int getPageSize() {
@@ -135,6 +281,20 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
             throws TransactionAbortedException, DbException {
+        int getType = (perm == Permissions.READ_ONLY ? PageLock.SHARE : PageLock.EXCLUSIVE);
+        long start = System.currentTimeMillis();
+        while(true) {
+            if(!manager.acquireLock(pid, tid, getType)) {
+                long now = System.currentTimeMillis();
+                if(now - start > 500) {
+                    throw new TransactionAbortedException();
+                }
+            }else{
+                break;
+            }
+        }
+
+        // successful get a lock.
         // TODO: some code goes here
         if(!pageStore.containsKey(pid)) {
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
@@ -162,6 +322,7 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // TODO: some code goes here
         // not necessary for lab1|lab2
+        manager.releaseLock(tid, pid);
     }
 
     /**
@@ -172,6 +333,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // TODO: some code goes here
         // not necessary for lab1|lab2
+        manager.completeTransaction(tid);
     }
 
     /**
@@ -180,7 +342,7 @@ public class BufferPool {
     public boolean holdsLock(TransactionId tid, PageId p) {
         // TODO: some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return manager.isHoldLock(tid, p);
     }
 
     /**
