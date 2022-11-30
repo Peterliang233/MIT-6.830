@@ -29,7 +29,6 @@ public class Catalog {
 
     private static class Table {
         private static final long serialVersionUID = 1L;
-
         public final DbFile dbFile;
         public final String tableName;
         public final String pk;

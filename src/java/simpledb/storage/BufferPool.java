@@ -104,10 +104,6 @@ public class BufferPool {
             this.tid = tid;
         }
 
-        public PageLock() {
-
-        }
-
         public int getLockType() {
             return lockType;
         }
@@ -127,16 +123,16 @@ public class BufferPool {
 
 
     public class LockManager {
-        private ConcurrentHashMap<PageId, ConcurrentHashMap<TransactionId, PageLock>> locks;
+        private final ConcurrentHashMap<PageId, ConcurrentHashMap<TransactionId, PageLock>> locks;
 
         public LockManager() {
-            locks = new ConcurrentHashMap<>();
+            this.locks = new ConcurrentHashMap<>();
         }
 
-        public synchronized boolean acquireLock(PageId pid, TransactionId tid, int lockType) {
+        public synchronized boolean acquireLock(PageId pid, TransactionId tid, int needLockType) {
             // get the locks on the page.
             if(!locks.containsKey(pid)){
-                PageLock pageLock = new PageLock(lockType,tid);
+                PageLock pageLock = new PageLock(needLockType,tid);
                 ConcurrentHashMap<TransactionId, PageLock> map = new ConcurrentHashMap<>();
                 map.put(tid, pageLock);
                 locks.put(pid, map);
@@ -148,9 +144,9 @@ public class BufferPool {
                 PageLock pageLock = pageMap.get(tid);
                 // already have a share lock.
                 if(pageLock.getLockType() == PageLock.SHARE) {
-                    if(lockType == PageLock.SHARE) {
+                    if(needLockType == PageLock.SHARE) {
                         return true;
-                    }else if(lockType == PageLock.EXCLUSIVE){
+                    }else if(needLockType == PageLock.EXCLUSIVE){
                         // if transaction t is the only transaction holding a shared lock on an object o,t may upgrade its lock on o to an exclusive lock.
                         if(pageMap.size() == 1) {
                             pageLock.setLockType(PageLock.EXCLUSIVE);
@@ -161,6 +157,7 @@ public class BufferPool {
                             return false;
                         }
                     }
+                    return false;
                 }
 
                 return pageLock.getLockType() == PageLock.EXCLUSIVE;
@@ -170,12 +167,12 @@ public class BufferPool {
 
                 // the page's size > 1 confirm there is a shore lock.
                 if(pageMap.size()>1){
-                    if(lockType == PageLock.SHARE) {
-                        PageLock pageLock = new PageLock(lockType, tid);
+                    if(needLockType == PageLock.SHARE) {
+                        PageLock pageLock = new PageLock(needLockType, tid);
                         pageMap.put(tid, pageLock);
                         locks.put(pid, pageMap);
                         return true;
-                    }else if(lockType == PageLock.EXCLUSIVE){
+                    }else if(needLockType == PageLock.EXCLUSIVE){
                         return false;
                     }
                 }else if(pageMap.size()==1){
@@ -187,12 +184,12 @@ public class BufferPool {
 
                     // hold a share lock.
                     if(pageLock.getLockType() == PageLock.SHARE){
-                        if(lockType == PageLock.SHARE){
+                        if(needLockType == PageLock.SHARE){
                             PageLock newPageLock = new PageLock(PageLock.SHARE, tid);
                             pageMap.put(tid, newPageLock);
                             locks.put(pid, pageMap);
                             return true;
-                        }else if(lockType == PageLock.EXCLUSIVE){
+                        }else if(needLockType == PageLock.EXCLUSIVE){
                             return false;
                         }
                     }else if(pageLock.getLockType() == PageLock.EXCLUSIVE){
@@ -205,6 +202,7 @@ public class BufferPool {
         }
 
         public synchronized void releaseLock(TransactionId tid, PageId pid) {
+            System.out.println("tid: " + tid.getId() + " release pid: " + pid.getPageNumber());
             if(isHoldLock(tid, pid)){
                 ConcurrentHashMap<TransactionId, PageLock> map = locks.get(pid);
                 map.remove(tid);
@@ -241,7 +239,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // TODO: some code goes here
         this.numPages = numPages;
-        pageStore = new ConcurrentHashMap<PageId, LinkNode>();
+        pageStore = new ConcurrentHashMap<>();
         head = new LinkNode(new HeapPageId(-1,-1), null);
         tail = new LinkNode(new HeapPageId(-1,-1), null);
 
@@ -286,26 +284,34 @@ public class BufferPool {
         long start = System.currentTimeMillis();
         boolean isLockAcquired = false;
         long timeout = new Random().nextInt(2000) + 1000;
+        System.out.println("tid: " + tid.getId() + " timeout: " + timeout  + " thread: " + Thread.currentThread().getName() + " pid: " + pid.getPageNumber());
         while(!isLockAcquired) {
+            isLockAcquired = manager.acquireLock(pid, tid, getType);
             long now = System.currentTimeMillis();
-            if(now - start > timeout) {
+            if(!isLockAcquired && now - start > timeout) {
+                System.out.println("tid: " + tid.getId() + " timeout");
                 throw new TransactionAbortedException();
             }
-            isLockAcquired = manager.acquireLock(pid, tid, getType);
         }
 
+        System.out.println("tid: " + tid.getId() + " success get a lock"  + " thread: " + Thread.currentThread().getName());
         // successful get a lock.
         // TODO: some code goes here
         if(!pageStore.containsKey(pid)) {
+            // read the page from disk.
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             Page page = dbFile.readPage(pid);
+            // the bufferPool is full,we should evict a page from bufferPool,which use a LFU algorithm.
             if(pageStore.size() >= numPages) {
                 evictPage();
             }
             LinkNode node = new LinkNode(pid, page);
+            // put the page into the pool and add the new node to head of linkList.
             pageStore.put(pid, node);
             addToHead(node);
         }
+
+        // if the pool already have this page,only to move this node to head of linkList.
         moveToHead(pageStore.get(pid));
         return pageStore.get(pid).page;
     }
@@ -333,7 +339,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // TODO: some code goes here
         // not necessary for lab1|lab2
-        manager.completeTransaction(tid);
+        transactionComplete(tid, true);
     }
 
     /**
@@ -365,6 +371,7 @@ public class BufferPool {
         }else {
            // restore all the page before
             restorePages(tid);
+            System.out.println(tid.getId() + " fail");
         }
         // after that,we should release all the lock in this tid.
         manager.completeTransaction(tid);
@@ -433,15 +440,29 @@ public class BufferPool {
     }
 
 
+    /**
+     * given some dirty pages,then update the bufferPool.
+     * @param pages some dirty pages.
+     * @param tid transaction Id.
+     * @throws DbException
+     */
     public void updateBufferPool(List<Page> pages, TransactionId tid) throws DbException {
         for(Page page: pages) {
             page.markDirty(true,tid);
+        }
+        for(Page page: pages) {
             if(pageStore.size() > numPages){
                 evictPage();
             }
-            LinkNode node = pageStore.get(page.getId());
-            node.page = page;
-            pageStore.put(page.getId(), node);
+            if(pageStore.containsKey(page.getId())) {
+                LinkNode node = pageStore.get(page.getId());
+                node.page = page;
+                pageStore.put(page.getId(), node);
+            }else{
+                LinkNode node = new LinkNode(page.getId(), page);
+                addToHead(node);
+                pageStore.put(page.getId(), node);
+            }
         }
     }
 
@@ -483,6 +504,12 @@ public class BufferPool {
         // not necessary for lab1
         Page page = pageStore.get(pid).page;
         if(page.isDirty()!=null) {
+            System.out.println(page.isDirty().getId() + " finished, start to flushPage");
+            HeapPage heapPage = (HeapPage) page;
+            Iterator<Tuple> it = heapPage.iterator();
+            while(it.hasNext()) {
+                System.out.println("data: " + it.next().getField(0));
+            }
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
             page.markDirty(false, null);
         }
@@ -527,8 +554,8 @@ public class BufferPool {
                     e.printStackTrace();
                 }
                 pageStore.remove(node.pageId);
+                return;
             }
-            return;
         }
 
         throw new DbException("there are no dirty pages.");
